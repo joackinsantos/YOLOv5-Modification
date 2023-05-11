@@ -331,18 +331,6 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             if m in {BottleneckCSP, C3, C3TR, C3Ghost, C3x}:
                 args.insert(2, n)  # number of repeats
                 n = 1
-        # RESNET MODIFICATION 2
-        elif m is resLayer:
-            c1=ch[f if f<0 else f+1]
-            c2=args[0]
-            args=[c1,c2,resnet_n,*args[1:]]
-        # RESNET MODIFICATION 2
-        # VGG MODIFICATION 1
-        elif m is vggLayer:
-            c1=ch[f if f<0 else f+1] # input channel
-            c2=args[0] # output channel, defined in args of yaml file
-            args=[c1,c2,vgg_n,*args[1:]] # modify args as [ch_in, ch_out, num_blocks, stride]
-        # VGG MODIFICATION 1
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
         elif m is Concat:
@@ -358,6 +346,18 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             c2 = ch[f] * args[0] ** 2
         elif m is Expand:
             c2 = ch[f] // args[0] ** 2
+        # RESNET MODIFICATION 2
+        elif m is resLayer:
+            c1=ch[f if f<0 else f+1]
+            c2=args[0]
+            args=[c1,c2,resnet_n,*args[1:]]
+        # RESNET MODIFICATION 2
+        # VGG MODIFICATION 1
+        elif m is vggLayer:
+            c1=ch[f if f<0 else f+1] # input channel
+            c2=args[0] # output channel, defined in args of yaml file
+            args=[c1,c2,vgg_n,*args[1:]] # modify args as [ch_in, ch_out, num_blocks, stride]
+        # VGG MODIFICATION 1
         else:
             c2 = ch[f]
 
