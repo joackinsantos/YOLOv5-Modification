@@ -869,3 +869,69 @@ class Classify(nn.Module):
         if isinstance(x, list):
             x = torch.cat(x, 1)
         return self.linear(self.drop(self.pool(self.conv(x)).flatten(1)))
+
+# RESNET MODIFICATION
+def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,padding=dilation, groups=groups, bias=False, dilation=dilation)
+
+def conv1x1(in_planes, out_planes, stride=1):
+    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+
+class resBottleneck(nn.Module):
+    expansion = 4
+    def __init__(self, inplanes, planes, stride=1, groups=1, base_width=64, dilation=1, norm_layer=None, downsample=False):
+        super(resBottleneck, self).__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        width = int(planes * (base_width / 64.)) * groups
+        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = conv1x1(inplanes, width)
+        self.bn1 = norm_layer(width)
+        self.conv2 = conv3x3(width, width, stride, groups, dilation)
+        self.bn2 = norm_layer(width)
+        self.conv3 = conv1x1(width, planes * self.expansion)
+        self.bn3 = norm_layer(planes * self.expansion)
+        self.relu = nn.ReLU(inplace=True)
+        if downsample:
+            self.downsample = nn.Sequential(conv1x1(inplanes, planes * self.expansion, stride),nn.BatchNorm2d(planes * self.expansion),)
+        else:
+            self.downsample=None
+        self.stride = stride
+
+    def forward(self, x):
+        identity = x
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.relu(self.bn2(self.conv2(out)))
+        out = self.bn3(self.conv3(out))
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+class resLayer(nn.Module):
+    def __init__(self, c1, c2, n=1, s=1, g=1, w=64, downsample=False): #chin, plane, block_nums, group, width_per_group
+        super(resLayer,self).__init__()
+        blocks=[resBottleneck(inplanes=c1, planes=c2, stride=s, groups=g, base_width=w, downsample=downsample)]
+        for _ in range(n-1):
+            blocks.append(resBottleneck(inplanes=c2*resBottleneck.expansion, planes=c2, stride=1, groups=g, base_width=w))
+        self.layers = nn.Sequential(*blocks)
+    def forward(self, x):
+        return self.layers(x)
+# RESNET MODIFICATION
+
+# VGG MODIFICATION
+class vggLayer(nn.Module):
+    def __init__(self, c1, c2, n=1, s=2): #chin, chout, block_nums, stride
+        super(vggLayer,self).__init__()
+        blocks=[nn.Conv2d(c1, c2, kernel_size=3, stride=1, padding=1, bias=True),nn.ReLU(inplace=True)]
+        for _ in range(n-1):
+            blocks+=[nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1, bias=True),nn.ReLU(inplace=True)]
+        blocks.append(nn.MaxPool2d(kernel_size=2, stride=s, padding=0, dilation=1))
+        self.layers = nn.Sequential(*blocks)
+    def forward(self, x):
+        return self.layers(x)
+# VGG MODIFICATION

@@ -314,6 +314,12 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
                 args[j] = eval(a) if isinstance(a, str) else a  # eval strings
 
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
+        # RESNET MODIFICATION 1
+        resnet_n=n
+        # RESNET MODIFICATION 1
+        # VGG MODIFICATION 1
+        vgg_n=n
+        # VGG MODIFICATION 1
         if m in {
                 Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
                 BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x}:
@@ -325,6 +331,18 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             if m in {BottleneckCSP, C3, C3TR, C3Ghost, C3x}:
                 args.insert(2, n)  # number of repeats
                 n = 1
+        # RESNET MODIFICATION 2
+        elif m is resLayer:
+            c1=ch[f if f<0 else f+1]
+            c2=args[0]
+            args=[c1,c2,resnet_n,*args[1:]]
+        # RESNET MODIFICATION 2
+        # VGG MODIFICATION 1
+        elif m is vggLayer:
+            c1=ch[f if f<0 else f+1] # input channel
+            c2=args[0] # output channel, defined in args of yaml file
+            args=[c1,c2,vgg_n,*args[1:]] # modify args as [ch_in, ch_out, num_blocks, stride]
+        # VGG MODIFICATION 1
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
         elif m is Concat:
@@ -353,6 +371,17 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         if i == 0:
             ch = []
         ch.append(c2)
+
+        # RESNET MODIFICATION 3
+        if m is resLayer:
+            m_=m(*args)
+            c2*=4 #blocks.expansion
+        # RESNET MODIFICATION 3
+        # VGG MODIFICATION 1
+        if m is vggLayer:
+            m_=m(*args) # create nn module
+        # VGG MODIFICATION 1
+
     return nn.Sequential(*layers), sorted(save)
 
 
