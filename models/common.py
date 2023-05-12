@@ -30,17 +30,13 @@ from utils.general import (LOGGER, ROOT, Profile, check_requirements, check_suff
                            increment_path, is_jupyter, make_divisible, non_max_suppression, scale_boxes, xywh2xyxy,
                            xyxy2xywh, yaml_load)
 from utils.plots import Annotator, colors, save_one_box
-from utils.torch_utils import *
+from utils.torch_utils import copy_attr, smart_inference_mode
 
-try:
-    from mish_cuda import MishCuda as Mish
-except:
-    class Mish(nn.Module):  # https://github.com/digantamisra98/Mish
-        def forward(self, x):
-            return x * torch.nn.functional.softplus(x).tanh()
 
-def autopad(k, p=None):  # kernel, padding
-    # Pad to 'same'
+def autopad(k, p=None, d=1):  # kernel, padding, dilation
+    # Pad to 'same' shape outputs
+    if d > 1:
+        k = d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]  # actual kernel-size
     if p is None:
         p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
     return p
@@ -63,9 +59,10 @@ class Conv(nn.Module):
         return self.act(self.conv(x))
 
 
-def DWConv(c1, c2, k=1, s=1, act=True):
-    # Depthwise convolution
-    return Conv(c1, c2, k, s, g=math.gcd(c1, c2), act=act)
+class DWConv(Conv):
+    # Depth-wise convolution
+    def __init__(self, c1, c2, k=1, s=1, d=1, act=True):  # ch_in, ch_out, kernel, stride, dilation, activation
+        super().__init__(c1, c2, k, s, g=math.gcd(c1, c2), d=d, act=act)
 
 
 class DWConvTranspose2d(nn.ConvTranspose2d):
@@ -126,53 +123,20 @@ class Bottleneck(nn.Module):
 class BottleneckCSP(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(BottleneckCSP, self).__init__()
+        super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
         self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
         self.cv4 = Conv(2 * c_, c2, 1, 1)
         self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
-        self.act = Mish()
-        self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
+        self.act = nn.SiLU()
+        self.m = nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
 
     def forward(self, x):
         y1 = self.cv3(self.m(self.cv1(x)))
         y2 = self.cv2(x)
-        return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
-    
-class BottleneckCSP2(nn.Module):
-    # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(BottleneckCSP2, self).__init__()
-        c_ = int(c2)  # hidden channels
-        self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
-        self.cv3 = Conv(2 * c_, c2, 1, 1)
-        self.bn = nn.BatchNorm2d(2 * c_) 
-        self.act = Mish()
-        self.m = nn.Sequential(*[Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)])
-
-    def forward(self, x):
-        x1 = self.cv1(x)
-        y1 = self.m(x1)
-        y2 = self.cv2(x1)
-        return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
-
-class VoVCSP(nn.Module):
-    # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super(VoVCSP, self).__init__()
-        c_ = int(c2)  # hidden channels
-        self.cv1 = Conv(c1//2, c_//2, 3, 1)
-        self.cv2 = Conv(c_//2, c_//2, 3, 1)
-        self.cv3 = Conv(c_, c2, 1, 1)
-
-    def forward(self, x):
-        _, x1 = x.chunk(2, dim=1)
-        x1 = self.cv1(x1)
-        x2 = self.cv2(x1)
-        return self.cv3(torch.cat((x1,x2), dim=1))
+        return self.cv4(self.act(self.bn(torch.cat((y1, y2), 1))))
 
 
 class CrossConv(nn.Module):
@@ -268,37 +232,6 @@ class SPPF(nn.Module):
             y2 = self.m(y1)
             return self.cv2(torch.cat((x, y1, y2, self.m(y2)), 1))
 
-class SPPCSP(nn.Module):
-    # CSP SPP https://github.com/WongKinYiu/CrossStagePartialNetworks
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=(5, 9, 13)):
-        super(SPPCSP, self).__init__()
-        c_ = int(2 * c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
-        self.cv3 = Conv(c_, c_, 3, 1)
-        self.cv4 = Conv(c_, c_, 1, 1)
-        self.m = nn.ModuleList([nn.MaxPool2d(kernel_size=x, stride=1, padding=x // 2) for x in k])
-        self.cv5 = Conv(4 * c_, c_, 1, 1)
-        self.cv6 = Conv(c_, c_, 3, 1)
-        self.bn = nn.BatchNorm2d(2 * c_) 
-        self.act = Mish()
-        self.cv7 = Conv(2 * c_, c2, 1, 1)
-
-    def forward(self, x):
-        x1 = self.cv4(self.cv3(self.cv1(x)))
-        y1 = self.cv6(self.cv5(torch.cat([x1] + [m(x1) for m in self.m], 1)))
-        y2 = self.cv2(x)
-        return self.cv7(self.act(self.bn(torch.cat((y1, y2), dim=1))))
-
-class MP(nn.Module):
-    # Spatial pyramid pooling layer used in YOLOv3-SPP
-    def __init__(self, k=2):
-        super(MP, self).__init__()
-        self.m = nn.MaxPool2d(kernel_size=k, stride=k)
-
-    def forward(self, x):
-        return self.m(x)
-
 
 class Focus(nn.Module):
     # Focus wh information into c-space
@@ -372,17 +305,12 @@ class Expand(nn.Module):
 class Concat(nn.Module):
     # Concatenate a list of tensors along dimension
     def __init__(self, dimension=1):
-        super(Concat, self).__init__()
+        super().__init__()
         self.d = dimension
 
     def forward(self, x):
         return torch.cat(x, self.d)
-    
-class Flatten(nn.Module):
-    # Use after nn.AdaptiveAvgPool2d(1) to remove last 2 dimensions
-    @staticmethod
-    def forward(x):
-        return x.view(x.size(0), -1)
+
 
 class DetectMultiBackend(nn.Module):
     # YOLOv5 MultiBackend class for python inference on various backends
@@ -921,28 +849,28 @@ class Proto(nn.Module):
 
 
 class Classify(nn.Module):
-    # Classification head, i.e. x(b,c1,20,20) to x(b,c2)
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1):  # ch_in, ch_out, kernel, stride, padding, groups
-        super(Classify, self).__init__()
-        self.aap = nn.AdaptiveAvgPool2d(1)  # to x(b,c1,1,1)
-        self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)  # to x(b,c2,1,1)
-        self.flat = Flatten()
+    # YOLOv5 classification head, i.e. x(b,c1,20,20) to x(b,c2)
+    def __init__(self,
+                 c1,
+                 c2,
+                 k=1,
+                 s=1,
+                 p=None,
+                 g=1,
+                 dropout_p=0.0):  # ch_in, ch_out, kernel, stride, padding, groups, dropout probability
+        super().__init__()
+        c_ = 1280  # efficientnet_b0 size
+        self.conv = Conv(c1, c_, k, s, autopad(k, p), g)
+        self.pool = nn.AdaptiveAvgPool2d(1)  # to x(b,c_,1,1)
+        self.drop = nn.Dropout(p=dropout_p, inplace=True)
+        self.linear = nn.Linear(c_, c2)  # to x(b,c2)
 
     def forward(self, x):
-        z = torch.cat([self.aap(y) for y in (x if isinstance(x, list) else [x])], 1)  # cat if list
-        return self.flat(self.conv(z))  # flatten to x(b,c2)
-    
-class vggLayer(nn.Module):
-    def __init__(self, c1, c2, n=1, s=2): #chin, chout, block_nums, stride
-        super(vggLayer,self).__init__()
-        blocks=[nn.Conv2d(c1, c2, kernel_size=3, stride=1, padding=1, bias=True),nn.ReLU(inplace=True)]
-        for _ in range(n-1):
-            blocks+=[nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1, bias=True),nn.ReLU(inplace=True)]
-        blocks.append(nn.MaxPool2d(kernel_size=2, stride=s, padding=0, dilation=1))
-        self.layers = nn.Sequential(*blocks)
-    def forward(self, x):
-        return self.layers(x)
+        if isinstance(x, list):
+            x = torch.cat(x, 1)
+        return self.linear(self.drop(self.pool(self.conv(x)).flatten(1)))
 
+# RESNET MODIFICATION
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,padding=dilation, groups=groups, bias=False, dilation=dilation)
 
@@ -993,3 +921,17 @@ class resLayer(nn.Module):
         self.layers = nn.Sequential(*blocks)
     def forward(self, x):
         return self.layers(x)
+# RESNET MODIFICATION
+
+# VGG MODIFICATION
+class vggLayer(nn.Module):
+    def __init__(self, c1, c2, n=1, s=2): #chin, chout, block_nums, stride
+        super(vggLayer,self).__init__()
+        blocks=[nn.Conv2d(c1, c2, kernel_size=3, stride=1, padding=1, bias=True),nn.ReLU(inplace=True)]
+        for _ in range(n-1):
+            blocks+=[nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1, bias=True),nn.ReLU(inplace=True)]
+        blocks.append(nn.MaxPool2d(kernel_size=2, stride=s, padding=0, dilation=1))
+        self.layers = nn.Sequential(*blocks)
+    def forward(self, x):
+        return self.layers(x)
+# VGG MODIFICATION
