@@ -184,8 +184,8 @@ def run(
                     y1 = int(xyxy[1].item())
                     x2 = int(xyxy[2].item())
                     y2 = int(xyxy[3].item())
-                    confidence_score = conf
-                    class_index = cls
+                    confidence_score = str(conf.item())
+                    class_index = str(cls.item())
                     object_name = names[int(cls)]
                     image_name = f'{p.stem}.jpg'
 
