@@ -32,6 +32,7 @@ import argparse
 import os
 import platform
 import sys
+import csv
 from pathlib import Path
 
 import torch
@@ -48,6 +49,11 @@ from utils.general import (LOGGER, Profile, check_file, check_img_size, check_im
                            increment_path, non_max_suppression, print_args, scale_boxes, strip_optimizer, xyxy2xywh)
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, smart_inference_mode
+
+# Creating a csv file
+with open('bounding-boxes.csv', mode='a', newline='') as file:
+    writer = csv.writer(file)
+    writer.writerow(['Image_Name', 'Confidence Score', 'Object_Name', 'Class_Index', 'minX', 'maxX', 'minY', 'maxY'])
 
 @smart_inference_mode()
 def run(
@@ -173,20 +179,26 @@ def run(
                     if save_crop:
                         save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
+                    # getting values of interest
                     x1 = int(xyxy[0].item())
                     y1 = int(xyxy[1].item())
                     x2 = int(xyxy[2].item())
                     y2 = int(xyxy[3].item())
-
                     confidence_score = conf
                     class_index = cls
                     object_name = names[int(cls)]
                     image_name = f'{p.stem}.jpg'
-                    print("bounding box", x1,y1,x2,y2)
-                    print('class index', class_index)
-                    print('classifications', object_name)
-                    print('confidence score', confidence_score)
-                    print('image name', image_name)
+
+                    # appending to the CSV file
+                    with open('bounding-boxes.csv', mode='a', newline='') as file:
+                        writer = csv.writer(file)
+                        writer.writerow([image_name, confidence_score, object_name, class_index, x1, x2, y1, y2])
+
+                    # print("bounding box", x1,y1,x2,y2)
+                    # print('class index', class_index)
+                    # print('classifications', object_name)
+                    # print('confidence score', confidence_score)
+                    # print('image name', image_name)
 
             # Stream results
             im0 = annotator.result()
