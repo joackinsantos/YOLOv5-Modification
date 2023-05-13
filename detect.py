@@ -181,7 +181,7 @@ def run(
                     confidence_score = conf
                     class_index = cls
                     object_name = names[int(cls)]
-                    image_name = os.path.basename(imc)
+                    image_name = f'{p.stem}.jpg'
                     print("bounding box", x1,y1,x2,y2)
                     print('class index', class_index)
                     print('classifications', object_name)
