@@ -49,8 +49,6 @@ from utils.general import (LOGGER, Profile, check_file, check_img_size, check_im
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, smart_inference_mode
 
-print("hello")
-
 @smart_inference_mode()
 def run(
         weights=ROOT / 'yolov5s.pt',  # model path or triton URL
@@ -175,20 +173,20 @@ def run(
                     if save_crop:
                         save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
-                        x1 = int(xyxy[0].item())
-                        y1 = int(xyxy[1].item())
-                        x2 = int(xyxy[2].item())
-                        y2 = int(xyxy[3].item())
+                    x1 = int(xyxy[0].item())
+                    y1 = int(xyxy[1].item())
+                    x2 = int(xyxy[2].item())
+                    y2 = int(xyxy[3].item())
 
-                        confidence_score = conf
-                        class_index = cls
-                        object_name = names[int(cls)]
-                        image_name = os.path.basename(imc)
-                        print("bounding box", x1,y1,x2,y2)
-                        print('class index', class_index)
-                        print('classifications', object_name)
-                        print('confidence score', confidence_score)
-                        print('image name', image_name)
+                    confidence_score = conf
+                    class_index = cls
+                    object_name = names[int(cls)]
+                    image_name = os.path.basename(imc)
+                    print("bounding box", x1,y1,x2,y2)
+                    print('class index', class_index)
+                    print('classifications', object_name)
+                    print('confidence score', confidence_score)
+                    print('image name', image_name)
 
             # Stream results
             im0 = annotator.result()
